@@ -7,6 +7,9 @@
 #include "tegra234-p3767-0000.dtsi"
 #include "tegra234-p3768-0000.dtsi"
 
+#define CAMERA_I2C_MUX_BUS(x) (0x1E + x)
+#define CAM1_PWDN	TEGRA234_MAIN_GPIO(H, 6)
+
 / {
 	compatible = "nvidia,p3768-0000+p3767-0000", "nvidia,p3767-0000", "nvidia,tegra234";
 	model = "NVIDIA Jetson Orin NX 16GB ARK PAB Jetson Carrier";
@@ -16,6 +19,234 @@
 		serial2 = &uarte;
 		serial3 = &uartb;
 	};
+
+  i2c@3180000 {
+    tca9548@70 {
+      compatible = "nxp,pca9548";
+      reg = <0x70>;
+      skip_mux_detect;
+      force_bus_start = <CAMERA_I2C_MUX_BUS(0)>;
+      status = "okay";
+      #address-cells = <1>;
+      #size-cells = <0>;
+
+      i2c@0 {
+        reg = <0>;
+        i2c-mux,deselect-on-exit;
+        #address-cells = <1>;
+        #size-cells = <0>;
+      };
+    };
+  };
+
+  gpio@6000d000 {
+    camera-control-output-low {
+      gpio-hog;
+      output-low;
+      gpios = <CAM1_PWDN 0>;
+      label = "cam1-pwdn";
+    };
+  };
+
+  tegra-capture-vi {
+    num-channels = <1>;
+
+    ports {
+      #address-cells = <1>;
+      #size-cells = <0>;
+
+      port@0{
+        status = "okay";
+        reg = <0>;
+
+        tc358743_vi_in0: endpoint {
+          status = "okay";
+          port-index = <0>;  /* MIPI O*/
+          bus-width = <4>;
+          remote-endpoint = <&tc358743_csi_out0>;
+        };
+      };
+    };
+  };
+
+  host1x@13e00000 {
+    nvcsi@15a00000 {
+      num-channels = <1>;
+      #address-cells = <1>;
+      #size-cells = <0>;
+
+      channel@0 {
+        status = "okay";
+        reg = <0>;
+
+        ports {
+          #address-cells = <1>;
+          #size-cells = <0>;
+
+          port@0 {
+            status = "okay";
+            reg = <0>;
+
+            tc358743_i2c_csi_in0: endpoint@0 {
+              status = "okay";
+              port-index = <0>; /* MIPI 0 */
+              bus-width = <4>;
+              remote-endpoint = <&tc358743_i2c_out0>;
+            };
+          };
+
+          port@1 {
+            status = "okay";
+            reg = <1>;
+
+            tc358743_csi_out0: endpoint@1 {
+              status = "okay";
+              remote-endpoint = <&tc358743_vi_in0>;
+            };
+          };
+        };
+      };
+    };
+  };
+
+  i2c@3180000 {  /* I2C_PM, "adapter" 6 */
+    tca9548@70 {
+      i2c@0 {
+        status = "okay";
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        tc358743@0f {
+          status = "okay";
+          compatible = "toshiba,tc358743";
+          reg = <0x0f>; /* shifted by 2 */
+          devnode = "video0";
+          refclk_hz = <27000000>;  // refclk_hz -> regclk
+          refclk = <27000000>;  // refclk_hz -> regclk
+
+          reset-gpios = <&tegra_main_gpio CAM1_PWDN GPIO_ACTIVE_HIGH>;
+
+          #clock-cells = <0>;
+          clock-names = "refclk";
+          clock-frequency = <27000000>;
+
+          /* Physical dimensions of sensor */
+          physical_w = "3.680";
+          physical_h = "2.760";
+
+          /* Sensor Model */
+          sensor_model ="tc358743";
+          use_sensor_mode_id = "true";
+
+          num_lanes = "4";
+          tegra_sinterface = "serial_e";
+          phy_mode = "DPHY";
+          discontinuous_clk = "no";
+
+          ddc5v_delay = <2>;
+          enable_hdcp = "false";
+          lineinitcnt = <0xe80>;
+          lptxtimecnt = <0x003>;
+          tclk_headercnt = <0x1403>;
+          tclk_trailcnt = <0x00>;
+          ths_headercnt = <0x0103>;
+          twakeup     = <0x4882>;
+          tclk_postcnt = <0x008>;
+          ths_trailcnt = <0x02>;
+          hstxvregcnt = <0>;
+
+          ports {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            port@0 {
+              reg = <0>;
+              tc358743_i2c_out0: endpoint {
+                port-index = <0>; /* MIPI-4 CSI-E */
+                bus-width = <4>;
+                phy_mode = "DPHY";
+                cil_settletime = "30";
+
+                data-lanes = <1 2 3 4>;
+                clock-lanes = <0>;
+                clock-noncontinuous;
+                link-frequencies = /bits/ 64 <297000000>; 
+                /* link-frequencies = /bits/ 64 <148500000>; */
+                remote-endpoint = <&tc358743_i2c_csi_in0>;
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+
+  tegra-camera-platform {
+    compatible = "nvidia, tegra-camera-platform";
+
+  /**
+    * Physical settings to calculate max ISO BW
+    *
+    * num_csi_lanes = <>;
+    * Total number of CSI lanes when all cameras are active
+    *
+    * max_lane_speed = <>;
+    * Max lane speed in Kbit/s
+    *
+    * min_bits_per_pixel = <>;
+    * Min bits per pixel
+    *
+    * vi_peak_byte_per_pixel = <>;
+    * Max byte per pixel for the VI ISO case
+    *
+    * vi_bw_margin_pct = <>;
+    * Vi bandwidth margin in percentage
+    *
+    * max_pixel_rate = <>;
+    * Max pixel rate in Kpixel/s for the ISP ISO case
+    *
+    * isp_peak_byte_per_pixel = <>;
+    * Max byte per pixel for the ISP ISO case
+    *
+    * isp_bw_margin_pct = <>;
+    * Isp bandwidth margin in percentage
+    */
+    num_csi_lanes = <4>;
+    max_lane_speed = <2500000>;
+    min_bits_per_pixel = <10>;
+    vi_peak_byte_per_pixel = <2>;
+    vi_bw_margin_pct = <25>;
+    max_pixel_rate = <7500000>;
+    isp_peak_byte_per_pixel = <5>;
+    isp_bw_margin_pct = <25>;
+
+  /**
+    * The general guideline for naming badge_info contains 3 parts, and is as follows,
+    * The first part is the camera_board_id for the module; if the module is in a FFD
+    * platform, then use the platform name for this part.
+    * The second part contains the position of the module, ex. rear or front.
+    * The third part contains the last 6 characters of a part number which is found
+    * in the module's specsheet from the vender.
+    */
+    modules {
+      module0 {
+        status = "okay";
+        badge = "tc358743_top_i2c31";
+        position = "front";
+        orientation = "1";
+
+        drivernode0 {
+          status = "okay";
+          /* Declare PCL support driver (classically known as guid)  */
+          pcl_id = "v4l2_sensor";
+          /* Driver's v4l2 device name */
+          devname = "tc358743 30-000f"; //31-000f";
+          /* Declare the device-tree hierarchy to driver instance */
+          proc-device-tree = "/proc/device-tree/i2c@3180000/tca9548@70/i2c@0/tc358743@0f";
+        };
+      };
+    };
+  };
 
 	bus@0 {
 		serial@3100000 {
